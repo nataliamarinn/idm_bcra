@@ -1,0 +1,1430 @@
+---
+title: "Trabajo práctico final IDM"
+author: "Natalia Marín"
+format: 
+  html:
+    toc: true      
+    toc_float: true  
+    number-sections: true
+    self-contained: true  # 🔹 Incrusta todos los recursos en el HTML
+editor: visual
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
+# Introducción
+
+El Banco Central de la República Argentina [BCRA](https://www.bcra.gob.ar/) publica mensualmente un informe consolidado de deudas actuales e históricas (24 meses), denominado *Central de Deudores del Sistema Financiero*. Este consolidado se elabora en función de los datos recibidos de distintas entidades financieras, las cuales deben remitir de forma obligatoria y mensual al BCRA, detallando la totalidad de las financiaciones con la correspondiente situación de cada deudor.
+
+Cada deuda informada al BCRA es acompañada de su situación, una aproximación a la cantidad de días de atraso en el cumplimiento de pago:
+
+-   Situación 1 (**Situación normal**): atraso en el pago que no supere los 31 días.
+
+-   Situación 2 (**Riesgo bajo**): atraso en el pago de más de 31 días y hasta 90 días.
+
+-   Situación 3 (**Riesgo miedo**): atraso en el pago de más de 90 días y hasta 180 días.
+
+-   Situación 4 (**Riesgo alto**): atraso en el pago de más de 180 días a un año.
+
+-   Situación 5 (**Irrecuperable**): atraso superior a un año.
+
+-   Situación 6 (**Irrecuperable por disposición técnica**): deuda con una ex entidad
+
+Se cuenta con una muestra aleatoria de 19.737 CUITs (Clave Única Tributaria) de personas físicas que tenían al menos una deuda en el sistema financiero en Junio de 2019, que se encontraban en situación crediticia 1 o 2, es decir, que no tuvieran atrasos mayores a 90 días y cuyo monto total adeudado en ese momento no superaba los 100.000 pesos argentinos.
+
+Para los CUITs seleccionados en la muestra aleatoria se registraron y resumieron las deudas en todas las entidades en Junio de 2019 y también 6 meses hacia atrás. También se registraron las deudas de esos CUITs entre Julio de 2019 y Junio de 2020 para poder evaluar su evolución.
+
+
+
+```{r}
+#| message: false
+#| warning: false
+library(knitr)
+library(gtExtras)
+library(tidyverse)
+library(kableExtra)
+library(psych)
+library(corrplot)
+library(car)
+library(cowplot)
+library(ggdendro)
+library(caret) 
+```
+
+# Definición de variables
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+datos <- readRDS("D:/Introducción Data Mining/TP_final/idm_bcra/df_bcra_individuals.rds")
+
+data <- data.frame(
+  variable = c(
+    "id_individuo", "tipo_persona", "n_deudas_actual", "proxy_edad_actual", 
+    "deuda_total_actual", "deuda_con_garantia_actual", "situacion_mes_actual", 
+    "prop_con_garantia_actual", "tiene_garantia_actual", "mora_30_dias_mes_actual", 
+    "n_meses_seg_bcra", "media_deuda_total", "media_deuda_situacion_1", 
+    "media_deuda_situacion_2", "media_deuda_con_garantia", "media_deuda_sin_garantia", 
+    "media_deuda_en_default", "max_situacion_mes", "max_sit_mes_con_garantia", 
+    "max_sit_mes_sin_garantia", "media_prop_situacion_1", "media_prop_situacion_2", 
+    "media_prop_default", "media_prop_con_garantia", "prop_tuvo_garantia", 
+    "prop_mora_30_dias_seg", "prop_default_seg", "peor_situacion_respuesta", 
+    "default", "mora_mayor_30_dias"
+  ),
+  detalle = c(
+    "identificación del individuo (anonimizada).", "primeros dos dígitos del cuit (20: hombres; 27: mujeres, 23 y 24: repetidos).", 
+    "cantidad de entidades en las que el cuit tenía al menos una deuda en Jun-2019.", "tres primeros números del dni.", 
+    "monto total de deuda en Jun-2019 (expresada en miles de pesos).", "monto total de deuda garantizada en Jun-2019 (expresada en miles de pesos).", 
+    "situación crediticia más grave en todas las deudas del cuit en Jun-2019.", "proporción de la deuda garantizada en Jun-2019", 
+    "variable indicadora (0: no, 1: si) de si el cuit tenía al menos una deuda garantizada en Jun-2019.", 
+    "variable indicadora (0: no, 1: si) de si el cuit estaba en situación 2 en Jun-2019.", 
+    "cantidad de meses en los que el cuit tenía al menos una deuda informada en el sistema financiero, entre Dic-2018 y Jun-2019.", 
+    "promedio de la deuda total entre Dic-2018 y Jun-2019.", "promedio de la deuda en situación 1 entre Dic-2018 y Jun-2019.", 
+    "promedio de la deuda en situación 2 entre Dic-2018 y Jun-2019.", "promedio de la deuda garantizada entre Dic-2018 y Jun-2019.", 
+    "promedio de la deuda no garantizada entre Dic-2018 y Jun-2019.", 
+    "promedio de la deuda en default (situación 3 o peor) entre Dic-2018 y Jun-2019.", 
+    "máxima situación entre Dic-2018 y Jun-2019.", "máxima situación en las deudas garantizadas entre Dic-2018 y Jun-2019.", 
+    "máxima situación en las deudas no garantizadas entre Dic-2018 y Jun-2019.", 
+    "promedio de la proporción de deuda en situación 1 entre Dic-2018 y Jun-2019.", 
+    "promedio de la proporción de deuda en situación 2 entre Dic-2018 y Jun-2019.", 
+    "promedio de la proporción de deuda en default entre Dic-2018 y Jun-2019.", 
+    "promedio de la proporción de deuda garantizada entre Dic-2018 y Jun-2019.", 
+    "proporción de meses en los cuales el cuit tuvo deuda garantizada, entre Dic-2018 y Jun-2019.", 
+    "proporción de meses en los cuales el cuit estuvo en situación 2, entre Dic-2018 y Jun-2019.", 
+    "proporción de meses en los cuales el cuit estuvo en default, entre Dic-2018 y Jun-2019.", 
+    "situación crediticia más grave en todas las deudas del cuit entre Jul-2019 y Jun-2020.", 
+    "situación crediticia más grave mayor o igual 3 en todas las deudas del cuit entre Jul-2019 y Jun-2020.", 
+    "situación crediticia más grave igual 2 en todas las deudas del cuit entre Jul-2019 y Jun-2020."
+  )
+)
+
+# Generar la tabla usando kable
+kable(
+  data,
+  col.names = c("Variable", "Detalle"),
+  caption = "Tabla 1. Tabla descriptiva de variables."
+)
+```
+
+# Filtrado y limpieza
+
+Para garantizar la coherencia del análisis y enfocarnos en la población de interés, se realizó un filtrado y limpieza de los datos. Se excluyeron aquellos individuos cuya deuda total en junio de 2019 era mayor o igual a 100 mil pesos (1.705 individuos). Esta decisión responde al objetivo del estudio, que busca analizar únicamente a personas con niveles de deuda inferiores a este umbral.
+
+```{r}
+individuos_mas100 <- datos %>%
+  filter(deuda_total_actual >= 100) %>%
+  nrow() #1705 invididuos con deuda mayor a 100 mil pesos
+
+datos<- datos %>%
+  filter(deuda_total_actual < 100)
+
+```
+
+# Análisis exploratorio
+
+Para comenzar el análisis de los datos, se utilizó la función `skim()`, que permite obtener un resumen detallado (*Tabla 2*) de las variables presentes en nuestro *dataset*.
+
+*Tabla 2: Resumen de los datos*
+
+```{r}
+
+skimr::skim(datos)
+
+```
+
+La información que se obtiene de este análisis es la siguiente:
+
+-   El *dataset* cuenta con 18.032 registros y 30 columnas (variables), con una combinación de variables categóricas, numéricas y una variable del tipo *character*.
+
+-   La variable *character* es la variable `tipo_persona`, los 6 factores son variables relacionadas con la situación crediticia (por ejemplo `tiene_garantia`) y 23 variables numéricas.
+
+-   Algunas variables presentan distribuciones asimétricas con valores extremos.
+
+-   Existen variables que tienen naturaleza discreta o categórica, pero actualmente se encuentran en nuestro *dataset* como numéricas. Las variables `default`, `mora_mayor_30_dias`, `id_individuo`,`mora_30_dias_mes_actual`,`mora_mayor_30_dias` son factores pero en nuestro dataset se encuentran como variables numéricas.
+
+-   Existen valores faltantes en algunas variables, la variable `max_sit_mes_con_garantia` tiene un 97% de valores faltantes y `max_sit_mes_sin_garantia` también tiene valores faltantes pero en menor proporción.
+
+
+
+```{r}
+datos <- datos %>%
+  mutate(
+    default = as.factor(default),
+    mora_mayor_30_dias = as.factor(mora_mayor_30_dias),
+    mora_30_dias_mes_actual = as.factor(mora_30_dias_mes_actual),
+    id_individuo = as.character(id_individuo),
+    tipo_persona= as.factor(tipo_persona)
+  )
+```
+
+***Nota***: antes de realizar un análisis exploratorio más detallado y/o aplicar otras técnicas como *matriz de correlación* o *ACP*, es fundamental asegurarnos de que las variables estén correctamente clasificadas según su naturaleza. Esto se debe a que algunos métodos, especialmente aquellos que trabajan con distancias y relaciones lineales entre variables, requieren que las entradas sean de tipo numérico.
+
+## Análisis univariado
+
+### Tipo de persona
+
+En la *Figura 1* se muestra la distribución de los distintos tipos de persona según los dos primeros dígitos del CUIT. Se observa que las categorías más representadas son 20 y 27, que corresponden a hombres y mujeres, respectivamente, con una frecuencia similar. Por otro lado, las categorías 23 y 24, que tienen una menor presencia, corresponden a registros donde no se puede determinar con certeza el género de la persona.
+
+```{r}
+ggplot(datos, aes(x = as.factor(tipo_persona), fill = as.factor(tipo_persona))) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Figura 1. Distribución de tipo de persona",
+       x = "Tipo de persona",
+       y = "Frecuencia") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+Dado este patrón, se decidió agrupar los tipos de persona en tres categorías: Masculino (*tipo de persona = 20*), Femenino (*tipo de persona = 27*) o indeterminado (*tipo de persona igual a 23 o 24*).
+
+```{r}
+datos<- datos %>%
+  mutate(tipo_persona_cat = case_when(
+    tipo_persona == "20" ~ "Hombres",
+    tipo_persona == "27" ~ "Mujeres",
+    tipo_persona %in% c("23", "24") ~ "Sin definir",
+    TRUE ~ "Otros"  # En caso de encontrar valores inesperados
+  ))
+
+# Crear la tabla con conteo y porcentaje
+tabla_tipo_persona <- datos %>%
+  count(tipo_persona_cat) %>%
+  mutate(porcentaje = round((n / sum(n)) * 100, 3))
+
+# Mostrar tabla con kable y estilo
+kable(tabla_tipo_persona, caption = "Tabla 3: Distribución de tipo de persona categorizado",
+      col.names = c("Tipo de Persona", "Frecuencia", "Porcentaje (%)")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+
+```
+
+La distribución del tipo de persona categorizada muestra que el 47% corresponden al sexo femenino, 43% al masculino y el resto pertenece a la categoría indeterminado.
+
+### Número de deudas actual
+
+La *Figura 2* muestra la frecuencia de deudas por individuo en junio de 2019. Se observa que la mayoría de las personas (64%) tenía una sola deuda registrada. A medida que aumenta el número de entidades en las que un individuo tenía deudas, la frecuencia disminuye.
+
+```{r}
+ggplot(datos, aes(x = as.factor(n_deudas_actual))) +
+  geom_bar(fill = "#29508f") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, color = "black") +
+  labs(title = "Figura 2. Frecuencia de cantidad de deudas por individuo",
+       x = "Cantidad de deudas",
+       y = "Frecuencia") +
+  ylim(0, 15000) +  # Fijar el límite del eje Y
+  theme_minimal()
+
+
+```
+
+El gráfico nos sugiere que la mayoría de los deudores en la muestra mantenía relaciones crediticias con una o pocas entidades financieras, mientras que los casos con múltiples deuda en distintas entidades resultan más extraños.
+
+### Proxy edad actual
+
+Al analizar la variable `proxy_edad_actual`, se observa que la mayoría de los valores tienen 3 dígitos (15.014 observaciones), como se esperaría en un identificador basado en los tres primeros números del DNI. Sin embargo hay 2.922 registros con sólo dos dígitos y 26 con uno solo, lo que sugiere la posibilidad de un problema en la base de datos, ya sea por errores en a carga de la información o porque algunos valores podrían haber perdido un cero a la izquierda.
+
+```{r}
+
+# Crear la tabla con conteo y porcentaje
+digitos<- datos %>%
+  mutate(longitud = nchar(as.character(proxy_edad_actual))) %>%
+  count(longitud)
+
+kable(digitos, caption = "Tabla 4: cantidad de dígitos en proxy_edad_actual",
+      col.names = c("Número de dígitos", "Frecuencia"), align = "l") %>%
+  kable_styling(full_width = FALSE, position = "left", bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+Para posteriores análisis, se hace el supuesto que los registros con menos de 3 dígitos corresponden a individuos con DNIs que comienzan con ceros.
+
+En el gráfico de la *Figura 3* se muestra la distribución de los tres primeros dígitos del DNI. Los valores se distribuyen principalmente entre 100 y 400, con una concentración relativamente uniforme dentro de este rango.
+
+```{r}
+
+ggplot(datos, aes(x = proxy_edad_actual)) +
+  geom_histogram(bins = 15, fill = "#29508f", color = "black") +
+  labs(title = "Figura 3. Distribución de proxy_edad_actual",
+       x = "Tres primeros dígitos del DNI",
+       y = "Frecuencia") +
+  theme_minimal()
+```
+
+Se registran valores cercanos a cero, que corresponden a aquellos usuarios con menos de 3 dígitos. En la muestra obtenida, se obtuvieron pocos valores por encima de 400.
+
+Otra particularidad que se encuentra es que existen dos individuos con los primeros tres dígitos mayores a 600. Según esta [nota](https://www.argentina.gob.ar/interior/dni#:~:text=A%20partir%20de%20septiembre%20de,CUIT%20y%20CUIL%20de%20extranjeros.) se deben a extranjeros.
+
+
+### Deuda total actual
+
+En la *Figura 4* se observa la distribución del monto total de deuda en el sistema financiero argentino en junio de 2019, expresado en miles de pesos. Se encuentra una distribución asimétrica a la derecha, indicando que la mayoría de individuos de la muestra tienen niveles de deuda relativamente bajos, mientras que sólo un grupo más reducido de personas presenta deudas más elevadas.
+
+```{r}
+ggplot(datos, aes(x = deuda_total_actual)) +
+  geom_histogram(bins = 30, fill = "#29508f", color = "black") +
+  labs(title = "Figura 4. Distribución del monto total de deuda en junio de 2019",
+       x = "Deuda total (en miles de pesos)",
+       y = "Frecuencia") +
+  theme_minimal()
+
+
+```
+
+A partir de la *Tabla 5*, se encuentra que el monto mínimo de deuda registrado en la muestra es de mil pesos, mientras que el máximo alcanza el límite de 99 mil pesos. La mediana es de 21 mil pesos, lo que indica que la mitad de los individuos tienen una deuda menor a este valor. Se refuerza lo observado en el histograma, donde la distribución es asimétrica a la derecha, con una mayor concentración de personas con deudas más bajas y una cola larga de valores más elevados.
+
+```{r}
+
+
+# 📌 Crear manualmente el data frame con los valores del summary
+resumen_manual <- data.frame(
+  Estadística = c("Mínimo", "1er Cuartil", "Mediana", "Media", "3er Cuartil", "Máximo"),
+  `Deuda_total` = c(1.00, 9.00, 21.00, 29.15, 44.00, 99.00)  # Si necesitas agregar otra variable
+)
+
+# 📌 Mostrar tabla con formato kable
+kable(resumen_manual, caption = "Tabla 5: Resumen estadístico de deuda_total_actual", align = "l") %>%
+  kable_styling(full_width = FALSE, position = "left", bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+### Deuda con garantía actual
+
+En la *Figura 5* se muestra la distribución del monto de deuda garantizada en junio de 2019. La mayoría de los individuos de la muestra no tienen deuda garantizada, ya que la mayor concentración de frecuencia se encuentra en el valor cero.
+
+```{r}
+ggplot(datos, aes(x = deuda_con_garantia_actual)) +
+  geom_histogram(bins = 5,  fill = "#29508f", color = "black") +
+  labs(title = "Figura 5. Distribución del monto de deuda garantizada en junio de 2019",
+       x = "Deuda garantizada (en miles de pesos)",
+       y = "Frecuencia") +
+  theme_minimal()
+
+
+```
+
+
+### Situación mes actual
+
+En la *Figura 6* se muestra la distribución de la situación crediticia más grave en todas las deudas de los CUITs de la muestra en junio de 2019. Tal como se esperaba, los valores observados corresponden únicamente a situación 1 o 2, debido a que la población objetivo de la muestra fue seleccionada bajo el criterio de incluir únicamente a individuos de estas categorías.
+
+```{r}
+
+ggplot(datos, aes(x = as.factor(situacion_mes_actual), fill = as.factor(situacion_mes_actual))) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, color = "black", size = 5) +
+  labs(title = "Figura 6. Distribución de la situación crediticia en Junio de 2019",
+       x = "Situación crediticia",
+       y = "Frecuencia") +
+  ylim(0,20000) +  # 📌 Ajusta el eje y hasta 1800
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+
+Sin embargo, se observa que la proporción de individuos en situación 2 es de 701 casos, un porcentaje pequeño dentro de la muestra.
+
+### Proporción de deuda garantizada
+
+El análisis de la variable `prop_con_garantia_actual` muestra que la mayoría de los individuos no tienen ninguna parte de su deuda con garantía. Esto se refleja en la mediana y cuartiles observados en la *Tabla 6* que toman valor cero, indicando que al menos el 75% de los individuos no tienen garantía alguna.
+
+Este comportamiento está alineado con lo observado en la variable previamente analizada, `deuda_con_garantia_actual`, donde se identificó este fenómeno. Sin embargo, podríamos analizar para aquellos individuos que sí poseen alguna parte de su deuda garantizada, la proporción que se encuentra cubierta por garantía.
+
+
+```{r}
+
+# 📌 Crear manualmente el data frame con los valores del summary
+resumen_manual <- data.frame(
+  Estadística = c("Mínimo", "1er Cuartil", "Mediana", "Media", "3er Cuartil", "Máximo"),
+  `prop_con_garantia_actual` = c(0, 0, 0, 0.014, 0, 1)  # Si necesitas agregar otra variable
+)
+
+# 📌 Mostrar tabla con formato kable
+kable(resumen_manual, caption = "Tabla 6: Resumen estadístico de prop_con_garantia_actual", align = "l") %>%
+  kable_styling(full_width = FALSE, position = "left", bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+
+
+El gráfico de la *Figura 7* muestra la distribución de la proporción de deuda garantizada entre aquellos individuos que tienen alguna parte de su deuda con garantía (excluyendo a aquellos sin deuda garantizada). Hay individuos con distintos niveles de garantía y se observa un pico en el valor 1, lo que indica que una cantidad importante de este subgrupo de individuos tiene toda su deuda garantizada.
+
+```{r}
+ggplot(datos %>% filter(prop_con_garantia_actual > 0), aes(x = prop_con_garantia_actual)) +
+  geom_histogram(bins = 30, fill = "#29508f",  color = "black") +
+  labs(title = "Figura 7. Distribución de la proporción de deuda garantizada (solo con garantía)",
+       x = "Proporción de deuda garantizada",
+       y = "Frecuencia") +
+  theme_minimal()
+```
+
+### ¿Tiene garantía actual?
+
+La variable `tiene_garantía_actual` permite identificar de manera binaria a los individuos que tenían al menos una parte de su deuda respldada por garantía en junio de 2019. Como se observó en los análisis de las variables `deuda_con_garantia_actual` y `prop_con_garantia_actual`, la mayoría de los individuos no poseen deuda garantizada, confirmado en esta categorización.
+
+Los datos de la *Tabla 7* muestran que el 98% de los individuos (17.686) no tenían ninguna deuda con garantía, mientras que sólo casi un 2% contaba con al menos una deuda garantizada.
+
+```{r}
+tabla_garantia <- datos %>%
+  count(tiene_garantia_actual) %>%
+  mutate(proporcion = round((n / sum(n)) * 100, 2))
+
+# 📌 Crear la tabla con kable y darle formato
+tabla_garantia %>%
+  kable(
+    caption = "Tabla 7: Distribución de la variable tiene_garantia_actual",
+    col.names = c("Tiene Garantía", "Frecuencia", "Proporción (%)")
+  ) %>%
+  kable_styling(full_width = FALSE, position = "left", bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+### ¿Se encuentra en situación 2 en Junio de 2019?
+
+La variable `mora_30_días_mes_actual` es un indicador que señala si un individuo se encontraba en situación 2 en junio de 2019, es decir, con un atraso en pagos superior a 31 días pero menor a 90 días. Como se observó previamente en la distribución de la variable `situacion_mes_actual`, la gran mayoría de individuos de la muestra se encontraban en situación 1, mientras sólo un pequeño porcentaje tenía algún retraso en los pagos. Tal como se observa en la *Tabla 8*, sólo un 3,89% de los individuos se encontraba en situación 2 en Junio de 2019.
+
+```{r}
+tabla_mora <- datos %>%
+  count(mora_30_dias_mes_actual) %>%
+  mutate(proporcion = round((n / sum(n)) * 100, 2))
+
+# 📌 Crear la tabla con kable y darle formato
+tabla_mora %>%
+  kable(
+    caption = "Tabla 8: Distribución de la variable mora_30_dias_mes_actual",
+    col.names = c("Mora 30 días (Junio 2019)", "Frecuencia", "Proporción (%)")
+  ) %>%
+  kable_styling(full_width = FALSE, position = "left", bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+### Cantidad de meses con al menos una deuda informada (Dic 2018 - Jun 2019)
+
+La variable `n_meses_seg_bcra` indica la cantidad de meses en los que cada CUIT tenía al menos una deuda informada en el sistema financiero argentino entre diciembre de 2018 y junio de 2019.
+
+En la *Figura 8* se muestra la distribución de la variable, donde la mayor parte de los individuos presentan registros en todos los 7 meses del período considerado, indicando una presencia constante en el sistema financiero. A medida que disminuye la cantidad de meses con deuda informada, la cantidad de individuos disminuye progresivamente.
+
+```{r}
+ggplot(datos, aes(x = as.factor(n_meses_seg_bcra))) +
+  geom_bar(fill="#29508f") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, color = "#29508f", size = 5) +
+  labs(title = "Figura 8. Cantidad de meses con deuda informada (Dic 2018 - Jun 2019)",
+       x = "Cantidad de meses con deuda",
+       y = "Frecuencia") +
+  theme_minimal() +
+  ylim(0, 15000) +  # 📌 Ajusta el eje y hasta 15000
+  theme(legend.position = "none")
+
+
+```
+
+### Promedios de deuda según tipo y situacion crediticia (Dic 2018 - Jun 2019)
+
+Dado que las variables `media_deuda_total`, `media_deuda_situacion_1` ,`media_deuda_situacion_2`, `media_deuda_con_garantia`, `media_deuda_sin_garantia`y `media_deuda_en_default` representan promedios deuda en distintos contextos (total, garantizada, sin garantía, en mora, en *default*), se decidió analizarlas en conjunto a través de la *Tabla 9* resumen.
+
+```{r}
+
+# 📌 Crear tabla manualmente con los valores de resumen
+tabla_resumen <- data.frame(
+  Variable = c("Media Deuda Total", "Media Deuda Situación 1", "Media Deuda Situación 2",
+               "Media Deuda con Garantía", "Media Deuda sin Garantía", "Media Deuda en Default"),
+  Min = c(1.00, 0.00, 0.0000, 0.000, 0.00, 0.000),
+  `1st Qu.` = c(10.43, 10.00, 0.0000, 0.000, 10.00, 0.000),
+  Median = c(22.50, 21.57, 0.0000, 0.000, 21.71, 0.000),
+  Mean = c(31.03, 30.18, 0.5525, 1.049, 29.98, 0.301),
+  `3rd Qu.` = c(44.50, 43.17, 0.0000, 0.000, 42.83, 0.000),
+  Max = c(207.86, 207.86, 94.0000, 140.571, 207.86, 96.571)
+)
+
+# 📌 Mostrar tabla con `kable`
+kable(tabla_resumen, caption = "Tabla 9: Resumen estadístico de variables de deuda",
+      col.names = c("Variable", "Mínimo", "1er Cuartil", "Mediana", "Media", "3er Cuartil", "Máximo")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+El promedio de la deuda total es de 31,03 miles de pesos con una mediana de 22,5 miles de pesos. Se observa un rango amplio, con valores que van desde mil hasta los 207 mil pesos. La mayor parte de la deuda total se encuentra en situación 1 (normal), con un promedio de 30,18 mil pesos, cercano al promedio de la deuda total. Por otro lado, se observa que el 75% de los individuos tienen un promedio de deuda en mora (situación 2) igual a 0, lo que indica que la morosidad es un fenómeno poco frecuente en la muestra. Sin embargo, el valor máximo llega a 94 mil pesos, sugiriendo que algunos individuos presentan altos valores de deuda en situación de mora. Como se observó con anterioridad, la mayoría de individuos de la muestra no tienen deuda garantizada. El promedio de deuda garantizada es sólo de 1,049 mil pesos, confirmando la baja incidencia de este tipo en la muestra. A pesar de ello, hay casos donde la deuda garantizada alcanza los 140,57 mil pesos, lo que sugiere que existen ciertos individuos con deuda con garantía. Para el caso de aquellos individuos sin garantía, el promedio de deuda es de 29,98 mil pesos, similar al promedio de la deuda total (lo cual tiene sentido siendo que la mayoría de individuos no tiene deuda garantizada). La mediana de la deuda en *default* es igual a 9 lo que significa que la mayoría de los individuos no tienen deudas en situación 3 o peor. Sin embargo, el valor máximo de 96,57 nos muestra que existen individuos en la muestra con altos niveles de deuda en incumplimiento.
+
+
+### Máximos de situaciones crediticias (Dic 2018 - Jun 2019)
+
+Las variables `max_situacion_mes`, `max_sit_mes_con_garantia` y `max_sit_mes_sin_garantia` representan la máxima situación crediticia que un individuo alcanzó en el período de tiempo analizado, tanto en términos generales como diferenciado entre deuda garantizada y no garantizada.
+
+El gráfico de la *Figura 9* muestra la distribución de la máxima situación crediticia alcanzada por los individuos en el período analizado. La mayoría de los individuos alcanzaron un máximo de situación 1 (normal), sólo un pequeño porcentaje alcanzó la situación 2 o peor. Esto significa que un grupo reducido de la muestra experimentó atrasos en sus pagos en algún momento del período.
+
+```{r}
+
+# Transformar los datos a formato largo para mejor visualización
+datos_long <- datos %>%
+  pivot_longer(cols = c(max_situacion_mes, max_sit_mes_con_garantia, max_sit_mes_sin_garantia),
+               names_to = "tipo_situacion", values_to = "situacion")
+
+# Gráfico de barras
+ggplot(datos_long, aes(x = as.factor(situacion), fill = tipo_situacion)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Figura 9. Máxima Situación Crediticia Alcanzada (Dic 2018 - Jun 2019)",
+       x = "Máxima Situación Crediticia",
+       y = "Frecuencia",
+       fill = "Tipo de Situación") +
+  theme_minimal()
+```
+
+La presencia de valores faltantes (NA) es un punto importante en la interpretación. Esto ocurre porque la mayoría de individuos no tienen deuda garantizada, por lo que su máxima situación crediticia en este tipo de deuda no está definida y por eso queda vacía. No representa un error en los datos, sino que refleja que aquellos individuos sin deuda garantizada simplemente no tienen una situación crediticia registrada en esta categoría.
+
+### Proporciones de deuda según situación y garantía (Dic 2018 - Jun 2019)
+
+En este apartado se analizarán las siguientes variables que representan proporciones de deuda o de meses con determinada condición crediticia: `media_prop_situacion_1`,`media_prop_situacion_2`, `media_prop_default`, `media_prop_con_garantia`, `prop_tuvo_garantia`, `prop_mora_30_dias_seg` y `prop_default_seg`.
+
+Estas variables permiten evaluar la estabilidad financiera de los individuos de la muestra, observando qué porcentaje de su deuda (o de los meses analizados) estuvo en diferentes condiciones de riesgo o fue respaldada con garantía.
+
+```{r}
+# 📌 Crear tabla manualmente con los valores de resumen
+tabla_resumen_10 <- data.frame(
+  Variable = c("Media Prop. Situación 1", "Media Prop. Situación 2", "Media Prop. Default",
+               "Media Prop. Con Garantía", "Prop. Tuvo Garantía", "Prop. Mora 30 días seg.",
+               "Prop. Default seg."),
+  Min = c(0.0000, 0.00000, 0.000000, 0.00000, 0.0000, 0.00000, 0.00000),
+  `1st Qu.` = c(1.0000, 0.00000, 0.000000, 0.00000, 0.0000, 0.00000, 0.00000),
+  Median = c(1.0000, 0.00000, 0.000000, 0.00000, 0.0000, 0.00000, 0.00000),
+  Mean = c(0.9741, 0.01724, 0.008683, 0.01582, 0.0209, 0.04516, 0.01764),
+  `3rd Qu.` = c(1.0000, 0.00000, 0.000000, 0.00000, 0.0000, 0.00000, 0.00000),
+  Max = c(1.0000, 1.00000, 0.857143, 1.00000, 1.0000, 1.00000, 0.85714)
+)
+
+# 📌 Mostrar tabla con `kable`
+kable(tabla_resumen_10, caption = "Tabla 10: Resumen Estadístico de Variables de Proporciones",
+      col.names = c("Variable", "Mínimo", "1er Cuartil", "Mediana", "Media", "3er Cuartil", "Máximo")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+En la *Tabla 10* se encuentra que la proporción de deuda en situación 1 es predominante, lo que confirma que la mayoría de individuos mantuvieron su deuda en condición normal durante el período. En contraste, la proporción de deuda en situación 2 es más baja, indicando que al menos el 75% de los individuos de la muestra no presentó mora. Sin embargo, hay casos donde el 100% de la deuda estuvo en mora. La proporción de deuda en *default* es aún más reducida, con una media de 0,87% y valores máximos de 85,7%, evidenciando que muy pocos individuos tuvieron un incumplimiento severo en la muestra. Esto concuerda con la baja incidencia de situaciones de riesgo observada previamente. Respecto a la proporción de deuda garantizada, la media de 1,58% y la mediana de 0% refuerzan la conclusión previa de que la mayoría de individuos no tenía deuda garantizada. De manera similar, la proporción de meses con garantía es mínima, con valores concentrados en 0% reafirmando la baja presencia de estos casos. Finalmente, las proporciones de meses en mora y *default* presentan valores promedio de 4,5% y 1,76%, respectivamente, indicando que la gran mayoría de individuos no tuvo un deterioro crediticio de manera recurrente. Dicho esto, existen casos con alta exposición al riesgo, lo que podría justificar un análisis más detallado de estos perfiles.
+
+### Peor situación crediticia alcanzada (Jul 2019 - Jun 2020)
+
+La variable `peor_situacion_respuesta` representa la situación crediticia más grave que un individuo de la muestra experimentó en cualquier momento entre julio de 2019 y junio 2020. Dado que la muestra contenía sólo individuos en situación 1 o 2 en junio de 2019, es interesante observar cuántos lograron mantener su estado crediticio y cuántos experimentaron un deterioro. En la *Figura 10* se observa que la mayoría de los casos mantuvieron su deuda en situación normal. Un porcentaje menor de la muestra experimentó un deterioro financiero.
+
+```{r}
+
+
+# Gráfico de barras con etiquetas
+ggplot(datos, aes(x = as.factor(peor_situacion_respuesta))) +
+  geom_bar(fill = "#29508f") +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  labs(title = "Figura 10. Distribución de la Peor Situación Crediticia (Jul 2019 - Jun 2020)",
+       x = "Peor Situación Crediticia",
+       y = "Frecuencia") +
+  theme_minimal()
+
+```
+
+Para evaluar la evolución crediticia con un poco más de profundidad, se presenta a continuación una tabla de contingencia que compara la situación de individuos a junio de 2019 con la peor situación alcanzada en el período julio 2019 - junio 2020.
+
+```{r}
+library(janitor)
+
+
+# 📌 Crear la tabla de contingencia
+tabla_situacion <- datos %>%
+  tabyl(situacion_mes_actual, peor_situacion_respuesta) %>%
+  adorn_totals(where = "row") %>%
+  adorn_totals(where = "col")
+
+
+# 📌 Mostrar la tabla con kable
+kable(tabla_situacion, caption = "Tabla 11: Relación entre Situación Crediticia en Junio 2019 y Peor Situación Posterior") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+En la *Tabla 11* se observa que la mayoría de individuos que comenzaron en situación 1 lograron mantener esta categoría. Un grupo reducido en situación2 logró mejorar su perfil crediticio al pasar a situación 1. Sin embargo, se observa un deterioro en 1.738 personas que pasaron de una situación 1 a categorías de mayor riesgo y 424 personas en situación 2 también tuvieron una peor situación, alcanzando niveles de mora más graves. En total, 1.573 terminaron en situación 3 o peor, lo que indica un incremento del riesgo de *default*
+
+### Default
+
+La variable `default` indica si un individuo alcanzó una situación crediticia de 3 o peor en cualquier momento entre julio de 2019 y junio de 2020. La *Figura 11* muestra la distribución de individuos en *default* en este período. Se observa que la gran mayoría de individuos (aproximadamente el 91,3%) no ingresaron en situación de incumplimiento, mientras que 1.573 individuos (8,7%) sí alcanzaron el estado de *default*.
+
+```{r}
+
+ggplot(datos, aes(x = as.factor(default), fill = as.factor(default))) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  scale_fill_manual(values = c("steelblue", "red")) +
+  labs(title = "Figura 11. Distribución de Individuos en Default (Jul 2019 - Jun 2020)",
+       x = "Estado de Default",
+       y = "Frecuencia") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+Este tipo de variable suele ser utilizada como variable respuesta en modelos de predicción de riesgo crediticio, ya que permite anticipar las posibilidades de que un individuo entre en incumplimiento. Sin embargo, el desbalance observado en esta muestra podrá representar luego un desafío metodológico.
+
+### Mora mayor 30 días (Jul 2019 - Jun 2020)
+
+La variable `mora_mayor_30_dias` indica si un individuo tuvo una situación crediticia igual a 2 en todas sus deudas durante el período de julio 2019 a junio de 2020. A diferencia de la variable `default`, que captura los estados de incumplimientos severo (situación 3 o peor), esta variable permite identificar individuos que, si bien no entraron en *default*, presentaron atrasos de más de 30 días en sus pagos.
+
+En la *Figura 12* se observa que aproximadamente el 84% de las personas no incurrieron en atrasos prolongados, mientras que el restante 16% si tuvo al menos una deuda en situación 2 pero sin caer en *default*.
+
+```{r}
+ggplot(datos, aes(x = as.factor(mora_mayor_30_dias), fill = as.factor(mora_mayor_30_dias))) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5) +
+  scale_fill_manual(values = c("steelblue", "orange")) +
+  labs(title = "Figura 12. Distribución de Individuos en Mora Mayor a 30 Días (Jul 2019 - Jun 2020)",
+       x = "Estado de Mora (>30 días)",
+       y = "Frecuencia") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+Los resultados tienen coherencia con tabla de contingencia de situaciones crediticia analizada previamente, donde se observó que algunos individuos en situación 1 y 2 en junio de 2019 evolucionaron hacia estados de mayor riesgo
+
+## Comentarios sobre el análisis exploratorio
+
+El análisis exploratorio realizado permitió comprender la distribución y evolución de la situación crediticia de los individuos de la muestra, así como identificar patrones clave en su comportamiento financiero. Se observó que la mayoría de los individuos mantuvo una situación crediticia estable en el período analizado, aunque un grupo de personas experimentó un deterioro en su situación crediticia, alcanzando situaciones más riesgosas, incluso el *default*. El análisis mostró que muchas de las variables están altamente relacionadas o se derivan entre sí, como por ejemplo `situacion_mes_actual`, `peor_situacion_repuesta`,`default` o `mora_mayor_30_dias`, lo que sugiere redundancia en la información. Esto será un aspecto importante a considerar en posteriores análisis.
+
+# Correlación entre posibles predictoras de default
+
+Para analizar las posibles relaciones entre las variables predictoras de `default`, se calculará la **matriz de correlaciones** de las variables disponibles a junio de 2019. Este análisis permitirá identificar qué variables están fuertemente correlacionadas entre sí, lo que también puede indicar una redundancia de información o la existencia de relaciones esperadas entre los indicadores financieros.
+
+Antes de calcular la matriz de correlaciones es fundamental asegurarnos de que solo se incluyan las variables numéricas.
+
+*Figura 13. Matriz de correlación*
+```{r}
+library(corrplot)
+
+
+predictoras_default <- datos %>%
+  select(proxy_edad_actual,deuda_total_actual, deuda_con_garantia_actual, prop_con_garantia_actual,
+         media_deuda_total,media_deuda_situacion_1,media_deuda_situacion_2,media_deuda_con_garantia,media_deuda_sin_garantia, media_deuda_en_default, media_prop_situacion_1,media_prop_situacion_2, media_prop_default,media_prop_con_garantia,prop_tuvo_garantia, prop_mora_30_dias_seg,prop_default_seg)
+
+
+# 📌 Calcular la matriz de correlaciones
+matriz_corr <- cor(predictoras_default, use = "complete.obs")
+
+# 📌 Ajustar el margen superior para más espacio en el título
+par(mar = c(5, 5, 8, 2))  # Aumenta el tercer valor (margen superior)
+
+# 📌 Visualizar la matriz de correlaciones
+corrplot(matriz_corr, method = "color", type = "upper", tl.cex = 0.5, number.cex = 0.5,
+         col = colorRampPalette(c("blue", "white", "red"))(200), addCoef.col = "black",
+         tl.col = "black", tl.srt = 90)
+
+# 📌 Agregar el título con más separación
+
+
+
+```
+
+A partir de la matriz de correlaciones de la *Figura 13* se encuentran las siguientes observaciones:
+
+- Alta correlación entre la `deuda_total_actual` y `media_deuda_total` (*0.83*), lo cual es esperable, ya que individuos con mayores niveles de deuda en un mes probablemente hayan mantenido un patrón similar a lo largo del tiempo.
+
+- Alta correlación entre `media_deuda_situacion_1` y `deuda_total_actual` (*0.83*), reforzando lo observado en el análisis exploratorio, la mayor parte de la deuda se encuentra en situación 1.
+
+- Alta correlación entre `media_deuda_situacion_1` y `media_deuda_total` (*0.99*), casi correlación perfecta, indica que la deuda total promedio está casi completamente explicada por la deuda en situación 1.
+
+- Alta correlación entre `media_prop_con_garantia` y `prop_con_garantia_actual` (*0.92*), lo que sugiere que el nivel de deudas se mantiene constante para la mayoría de individuos, como se ha observado en el análisis exploratorio previo.
+
+- La correlación entre `prop_con_garantia_actual`y `prop_tuvo_garantia` de *0.87* muestra que la proporción deuda garantizada en junio de 2019 está altamente correlacionada con la proporción de meses que un individuo tuvo deuda garantizada.
+
+- La alta correlación entre `media_deuda_total`y `media_deuda_sin_garantia` de *0.96* indica que la mayor parte de la deuda total promedio está relacionada a la deuda sin garantía. Esto sugiere a que la mayoría de individuos acceden a financiamiento sin respaldo de garantías.
+
+- La fuerte correlación negativa entre `prop_mora_30_dias_seg` y `media_prop_situacion_1` (*-0.86*), es consistente con la lógica financiera: aquellos con una alta proporción de deuda en situación 1 tienen menos chances de haber estado en mora durante el período de análisis.
+
+- La variable `proxy_edad_actual` tiene correlación casi nula con el resto de las variables.
+
+## Comentarios sobre la matriz de correlaciones
+
+Las correlaciones analizadas sugieren que el comportamiento crediticio de los individuos tiende a ser estable a lo largo del tiempo, tanto en términos de garantías como de cumplimiento de pagos. Sin embargo, también reflejan una posible redundancia en ciertas variables, como en el caso de la deuda garantizada y su proporción a lo largo del tiempo. Esto debe ser considerado en posteriores análisis para evitar duplicidad de información en modelos y segmentación de clientes.
+
+# Análisis de componentes principales
+
+El **Análisis de Componentes Principales** (ACP) es una técnica útil en este caso porque permite reducir la dimensionalidad del conjunto de datos mientras se conserva la mayor parte de la variabilidad original. Dado que observamos correlaciones altas entre varias variables, el ACP nos ayudará a identificar combinaciones lineales de estas que expliquen la mayor parte de la información sin redundancia. Esto también puede contribuir a mejorar el desempeño de modelos predictivos al minimizar el problema de colinealidad.
+
+A continuación se presenta una serie de pasos para el cálculo, elección e interpretación de las componentes principales.
+
+## Cálculo de las componentes principales
+
+Para este análisis consideramos las mismas variables de la matriz de correlación, calculada previamente con variables a junio de 2019.
+
+*Nota: se excluyeron las variables n_deudas_actual y n_meses_seg_bcra, a pesar de ser numéricas, debido a que toman un número reducido de valores discretos y presentan una alta concentración en una o dos categorías, presentando distribución asimétrica. Incluir estas variables puede impactar el cálculo de las componentes con una influencia que no aporta variabilidad real al modelo. La variable proxy_edad_actual también fue excluida debido a su baja correlación con el resto de las variables.*
+
+Se aplica el ACP con normalización automática (`scale.unit=TRUE`) para trabajar con la matriz de correlaciónes (*matriz R*). Este paso es necesario porque las variables tienen diferentes escalas (por ejemplo, algunas están en miles de pesos y otras son proporciones que varían de 0 a 1).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+predictoras_default <- datos %>%
+  select(deuda_total_actual, deuda_con_garantia_actual, prop_con_garantia_actual,
+         media_deuda_total,media_deuda_situacion_1,media_deuda_situacion_2,media_deuda_con_garantia,media_deuda_sin_garantia, media_deuda_en_default, media_prop_situacion_1,media_prop_situacion_2, media_prop_default,media_prop_con_garantia,prop_tuvo_garantia, prop_mora_30_dias_seg,prop_default_seg)
+# Cargar las librerías
+library(FactoMineR)   # Para realizar el ACP
+library(factoextra)   # Para visualizar los resultados del ACP
+library(ggplot2)      # Para gráficos adicionales
+
+acp_resultado <- PCA(predictoras_default, scale.unit = TRUE, graph = FALSE)
+```
+
+## Analizar la varianza explicada
+
+Se desea conocer cuánto de la variabilidad total logran explicar las primeras componentes. El *gráfico de codo* o *scree plot* nos muestra la varianza explicada por cada componente.
+
+```{r}
+# Gráfico de codo para ver cuántas componentes retener
+fviz_eig(acp_resultado, addlabels = TRUE, ylim = c(0, 100),main="Figura 14.Scree plot") 
+
+```
+
+El gráfico de la *Figura 14* muestra que las dos primeras componentes explican conjuntamente la mitad (56.1%) de la variabilidad total de los datos, mientras que las tres primeras componentes alcanzan un 77.7%. A partir de la cuarta componente, la variancia explicada decrece a un ritmo mayor, lo que sugiere que la mayor parte de la información se resumen en las primeras dimensiones.
+
+El patrón observado en el gráfico es común en *datasets* con alta redundancia o multicolinealidad. Dado que previamente observamos en la matriz de correlaciones que muchas variables estaban altamente correlacionadas entre sí, era esperable que el ACP condensara la información en pocas dimensiones.
+
+En términos prácticos, la reducción de dimensionalidad es útil para identificar los principales ejes de variabilidad en el perfil crediticio de los individuos y facilitar su interpretación.
+
+## Análisis de las contribuciones
+
+Las contribuciones de las variables indican cuánto aporta cada una a la construcción de una determinada componente principal. Esto nos ayuda a identificar qué dimensiones resumen mejor la información original y cómo se pueden interpretar en términos de las variables más influyentes.
+
+```{r, echo=FALSE, message=FALSE}
+
+
+# Obtener la tabla de contribuciones
+contribuciones <- as.data.frame(acp_resultado$var$contrib)
+
+# Mostrar las variables que más contribuyen a las primeras tres dimensiones en formato kable
+kable(contribuciones[,1:3], digits = 2, caption = "Tabla 12. Contribución de las variables a las primeras tres dimensiones del ACP") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+```{r}
+fviz_contrib(acp_resultado, choice = "var", axes = 1, top = 10) +
+  labs(title = "Figura 15. Contribución de variables a la Dimensión 1") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+
+A partir de la *Tabla 12* y la *Figura 15* se observa que las variables más relevantes en la primera componente están relacionadas con la presencia de garantías en las deudas (`media_deuda_con_garantia`,`media_prop_con_garantia`, `prop_tuvo_garantia` y `prop_con_garantia_actual`).
+
+```{r}
+fviz_contrib(acp_resultado, choice = "var", axes = 2, top = 10) +
+  labs(title = "Figura 16. Contribución de variables a la Dimensión 2") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+En base a lo observado en la *Tabla 12* y la *Figura 16* la segunda componente pareciera estar capturando aspectos relacionados con el **riesgo crediticio y deterioro financiero** de los individuos.
+
+```{r}
+fviz_contrib(acp_resultado, choice = "var", axes = 3, top = 10) +
+  labs(title = "Figura 17. Contribución de variables a la Dimensión 3") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+A partir de la *Tabla 12* y *Figura 17* se sugiere que la tercera dimensión tres puede estar capturando una diferencia entre los individuos con deuda sin garantía y los que tienen garantía.
+
+## Análisis de las cargas
+
+Las cargas factoriales indican la correlación entre cada variable original y las componentes principales. En otras palabras, reflejan cuánto representa cada variable en cada dimensión. Mientras las contribuciones nos dicen qué variables dominan una componente, las cargas nos permiten interpretar que significa cada componente en términos de las variables originales.
+
+La *Tabla 13* muestra la relación entre las variables originales y las tres primeras componentes principales.
+
+```{r, echo=FALSE, message=FALSE}
+
+
+# Obtener la tabla de contribuciones
+correlacioness <- as.data.frame(acp_resultado$var$cor)
+
+# Mostrar las variables que más contribuyen a las primeras tres dimensiones en formato kable
+kable(correlacioness[,1:3], digits = 2, caption = "Tabla 13. Cargas factoriales en las dimensiones principales") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+
+```
+
+La primera componente principal mide el **nivel de deuda garantizada**, diferenciando a quienes poseen deudas con garantías de aquellos con deuda no respaldada. Individuos con valores altos en la primera dimensión tienen un mayor acceso a crédito garantizado. La segunda dimensión separa deudores de bajo riesgo de aquellos con *default* o mora alta. Valores negativos indican situaciones crediticias más estables, mientras que valores positivos reflejan mayor riesgo financiero. Esta variable podría pensarse como una medida del **riesgo crediticio**. La tercera componente diferencia a los individuos con deuda sin respaldo (tendrán valores altos) y aquellos con mayor proporción de deuda garantizada (valores negativos). Separa personas que dependen de financiamiento sin respaldo de quienes acceden a créditos con garantía.
+
+A mi parecer, las dimensiones 1 y 2 capturan las diferencias más importantes en la cartera crediticia.
+
+## Diferenciar individuos según el tipo de persona
+
+Para evaluar si las componentes principales logran diferencias los CUITs según el tipo de persona podemos visualizar la distribución de los individuos en el espacio de las dos primeras dimensiones del ACP, pintando los puntos según su categoría (Masculino, Femenino, Indeterminado).
+
+```{r}
+# Convertir los resultados del ACP en un dataframe y agregar la variable 'tipo_persona_cat'
+df_ind <- as.data.frame(acp_resultado$ind$coord)
+df_ind$tipo_persona_cat <- as.factor(datos$tipo_persona_cat)  # Convertir a factor por segu
+
+fviz_pca_ind(acp_resultado, 
+             habillage = df_ind$tipo_persona_cat,  
+             addEllipses = TRUE,  
+             ellipse.type = "confidence",
+             geom = "point",  # Solo puntos, sin etiquetas
+             palette = c("#E41A1C", "#377EB8", "#4DAF4A"),  
+             title = "Figura 18. Diferenciación de CUITs según tipo de persona")
+
+
+```
+
+La *Figura 18* que muestra gráfico de dispersión en las dos primeras componentes principales muestra que no existe una diferenciación clara entre los CUITs según el tipo de persona. Se observa que la mayoría de los puntos están cercanos al origen, lo que sugiere que la mayoría de los individuos tienen valores bajos en ambas dimensiones (endeudamiento con garantía bajo y bajo riesgo).
+
+En el gráfico se observa una línea recta que podría explicarse por el uso de proporciones (la suma de algunas proporciones podrían generar alineaciones en el espacio) o bien por la estructura del crédito. En el análisis exploratorio se observó que gran parte de los individuos no tenía deuda garantizada, lo que puede generar esta estructura alineada en el espacio de representación.
+
+
+# Segmentación de CUITs
+
+
+**¿Existen distintos subgrupos de CUITs en los datos? ¿Cuántos logra identificar? ¿Qué características tienen?**
+
+Se ha optado por la aplicación del algoritmo *K-means*, un método de *clustering* muy utilizado debido a su eficiencia computacional y su capacidad para segmentar grandes volúmenes de datos numéricos. En este caso, la medida de similitud empleada es la distancia *euclídea*, adecuada para variables continuas, que permite minimizar la variancia *intra-cluster*. 
+
+Es necesario recordar que el conjunto de datos también incluye variables categóricas, como la situación crediticia, el tipo de persona y la presencia o ausencia de garantías financieras. Para manejar este tipo de información, una alternativa común es el uso de la distancia de *Gower*, que permite calcular similitudes en daos mixtos. Sin embargo, este enfoque presenta una desventaja en términos de costo computacional, ya que requiere construir y almacenar una matriz de distancia de tamaño $NxN$, lo que resulta ineficiente en estudios como este, donde se trabaja con un tamaño de muestra considerable. Otra posibilidad sería convertir las variables categóricas en variables *dummy* y luego aplicar *K-means*.
+
+En este caso se optó por una tercera alternativa: construir los *clusters* utilizando las dos primeras componentes del ACP realizado previamente junto con las variables numéricas que no fueron incluidas en dicho análisis. 
+
+Una vez obtenidos los *clusters*, se analizará la distribución de cada grupo y su relación con las variables categóricas, permitiendo interpretar cómo estos factores se asocian con los grupos identificados. 
+
+## Elección de número de clusters
+
+
+Antes de aplicar el algoritmo *K-means*, es fundamental escalar las variables numéricas para garantizar que todas tengan la misma influencia en la segmentación. Esto se debe a que *K-means* utiliza la distancia *euclídea*, la cual es sensible a las diferencias de escala entre variables. Para ello, se emplea la estandarización, que transforma las variables a una media de 0 y una desviación estándar de 1.
+
+Para determinar el número óptimo de clusters, se ha optado por el criterio del Silhouette Score. Este método mide qué tan bien se encuentra cada observación dentro de su grupo en comparación con otros grupos, proporcionando una métrica que varía entre -1 y 1. Un valor cercano a 1 indica que las observaciones están bien agrupadas, mientras que valores cercanos a 0 o negativos sugieren que podrían estar mejor ubicadas en otro cluster.
+
+El número óptimo de clusters se selecciona observando en qué punto el Silhouette Score alcanza su máximo, asegurando una segmentación que refleje patrones reales dentro de los datos.
+```{r}
+# 📌 1. Cargar librerías necesarias
+library(tidyverse)
+library(cluster)  
+library(FactoMineR)
+library(factoextra)  
+
+# 📌 2. Extraer las dos primeras Componentes Principales (CP1 y CP2) del ACP
+pca_df <- data.frame(CP1 = acp_resultado$ind$coord[,1], 
+                     CP2 = acp_resultado$ind$coord[,2])
+
+# 📌 3. Seleccionar las variables originales adicionales para el clustering
+vars_extra <- datos %>%
+  select(n_deudas_actual, proxy_edad_actual, n_meses_seg_bcra)
+
+# 📌 4. Combinar CP1, CP2 y las variables seleccionadas
+clustering_data <- bind_cols(pca_df, vars_extra) %>% scale()  # Normalizar variables
+
+
+
+# 📌 Generar el gráfico con título
+fviz_nbclust(clustering_data, kmeans, method = "silhouette") +
+  ggtitle("Figura 19. Número óptimo de clusters métrica Silhouette") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+
+
+
+```
+
+En la *Figura 19* se muestra la evaluación del número óptimo de *clusters* utilizando el *índice de Silhouette*. Se observa que el pico máximo del índice ocurre en `k=6`, lo que sugiere que es el número de segmentación óptima según esta métrica.
+
+El gráfico de la *Figura 20*  representa la segmentación obtenida tras aplicar el algoritmo de *K-means* sobre las dos primeras CP. Cada punto de visualización corresponde a un individuo de la muestra y su color se refiere al *cluster* al que pertenece. Las regiones sombreadas delimitan el espacio de cada grupo. 
+
+```{r}
+# 📌 6. Aplicar K-means con el número óptimo de clusters (ejemplo con 3)
+set.seed(17)
+kmeans_result <- kmeans(clustering_data, centers = 6, nstart = 50)
+
+# 📌 7. Agregar los clusters al dataframe original
+datos$cluster <- as.factor(kmeans_result$cluster)
+
+
+fviz_cluster(kmeans_result, data = clustering_data, geom = "point", ellipse = TRUE) +
+  ggtitle("Figura 20. Distribución de Clusters") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+
+```
+
+
+Algunos, como el *cluster 1 *y el *cluster 6*, presentan una separación más clara del resto, lo que sugiere que estos grupos tienen características bien diferenciadas. Otros *clusters*, como los grupos 2, 3 y 4, muestran cierta superposición, lo que indica que podrían compartir similitudes en algunas dimensiones mientras que se diferencian en otras variables no representadas en este gráfico.
+
+
+## Características de los clusters
+
+El análisis *cluster* nos permite identificar los grupos con características crediticias similares a partir de la segmentación generada por *K-means*. Para comprender mejor las diferencias entre *clusters*, analizaremos su composición en función de variables numéricas y categóricas, lo que permitirá interpretar los patrones que explican la formación de cada grupo.
+
+
+
+### Respecto a las variables numéricas
+
+Se examina la distribución de los *clusters* en relación con las variables numéricas utilizadas en el análisis. 
+```{r}
+# 📌 Cargar librería necesaria
+# 📌 Agregar CP1 y CP2 al dataframe original
+df <- datos %>%
+  bind_cols(pca_df) %>%  # Agregar las CP1 y CP2 desde pca_df
+  mutate(cluster = as.factor(cluster))  # Asegurar que cluster sea factor
+
+# 📌 Calcular la media de CP1, CP2 y otras variables por cluster
+resumen_clusters <- df %>%
+  group_by(cluster) %>%
+  summarise(
+    Media_CP1 = mean(CP1, na.rm = TRUE),
+    Media_CP2 = mean(CP2, na.rm = TRUE),
+    Media_n_deudas = mean(n_deudas_actual, na.rm = TRUE),
+    Media_proxy_edad = mean(proxy_edad_actual, na.rm = TRUE),
+    Media_meses_seg_bcra = mean(n_meses_seg_bcra, na.rm = TRUE),
+    Cantidad_individuos = n()  # Cantidad de CUITs en cada cluster
+  )
+
+
+
+```
+
+
+
+*Figura 20. Distribución de variables continuas por cluster*
+```{r}
+
+library(ggplot2)
+library(cowplot)  # Para combinar gráficos
+
+# 📌 Función para generar boxplots por cluster
+generar_boxplots_por_grupos <- function(df, var_interes, grupos = "cluster") {
+  
+  # Asegurar que el cluster es factor
+  df[[grupos]] <- as.factor(df[[grupos]])
+  
+  # Generar el gráfico de boxplot
+  ggplot(df, aes_string(x = grupos, y = var_interes, fill = grupos)) +
+    geom_boxplot() +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    scale_x_discrete(name = paste0(grupos)) +
+    scale_y_continuous(name = paste0(var_interes)) +
+    geom_hline(yintercept = median(df[[var_interes]], na.rm = TRUE), 
+               linetype = "dashed", color = "red") +
+    theme(axis.text.x = element_text(size = rel(0.75)))
+}
+
+# 📌 Generar boxplots para cada variable relevante
+g1 <- generar_boxplots_por_grupos(df, "CP1")
+g2 <- generar_boxplots_por_grupos(df, "CP2")
+g3 <- generar_boxplots_por_grupos(df, "n_deudas_actual")
+g4 <- generar_boxplots_por_grupos(df, "proxy_edad_actual")
+g5 <- generar_boxplots_por_grupos(df, "n_meses_seg_bcra")
+
+# 📌 Combinar todos los gráficos en una grilla (2 columnas)
+plot_grid(g1, g2, g3, g4, g5, ncol = 2)
+
+```
+
+- **Distribución de CP1**: se observa que la mayoría de los *clusters* presentan valores de CP1 cercanos a cero. Sin embargo, el *cluster 4* se destaca con una mediana mucho más elevada en comparación a los demás grupos. También presenta una mayor variabilidad respecto a los demás grupos. Dado que CP1 mide el nivel de deuda garantizada, el gráfico sugiere que los individuos de este grupo tienen mayor deuda garantizada respecto a los demás.
+
+- **Distribución de CP2**: dado que esta dimensión captura el riesgo crediticio, donde valores negativos indican mayor estabilidad financiera y valores positivos reflejan mayor riesgo, se sugiere que el *cluster 5* se distingue del resto por tener altos valores de CP2. Esto implica que los individuos en este grupo están asociados con un riesgo financiero muy alto. Por otro lado, el *cluster 4* tiene valores de CP2 negativos, indicando que en este grupo existe una mejor situación crediticia.
+
+- **Distribución de número de deudas**: se observa que el *cluster 2* tiene un mayor número de deudas en promedio, con una mediana más alta en comparación con los demás *clusters*. 
+
+- **Distribución de proxy edad**: la variable `proxy_edad_actual` toma valores más altos cuando el individuo es más joven (o extranjero) y valores más bajos corresponden a personas de una edad más avanzada. El *cluster 6* se destaca por tener los valores de *proxy* bajos, indicando que este grupo está compuesto por individuos de mayor edad, mientras que el *cluster 3* presentan valores de edad más altos, lo que sugiere que está conformado por individuos más jóvenes.
+
+- **Distribución de meses con deuda**: se observa que los *clusters 2 a 6* tienen una gran concentración en el valor máximo, lo que sugiere que la mayoría de los individuos de estos grupos han estados en el sistema financiero durante todo el período considerado. En contraste, el *cluster 1*, se diferencia de los demás al presentar valores más bajos, con una mediana cercana a los 3 meses y un rango intercuartil más amplio. Esto sugiere que los individuos de este grupo tienen una presencia más reciente o intermitente en el sistema financiero.
+
+### Respecto a variables categóricas
+
+
+Analizaremos la distribución de los clusters en las variables categóricas, como la situación crediticia, la presencia de mora y la existencia de garantías. Esto permitirá evaluar si ciertos clusters están más asociados con perfiles de alto riesgo financiero o si existen diferencias en la composición de los grupos según el tipo de persona o la estabilidad crediticia.
+```{r}
+#| message: false
+#| warning: false
+#| include: false
+# 📌 Cargar librerías necesarias
+library(dplyr)
+library(ggplot2)
+
+# 📌 Lista de variables categóricas a analizar
+categorical_vars <- c("tipo_persona_cat", "situacion_mes_actual", "tiene_garantia_actual",
+                      "mora_30_dias_mes_actual", "max_situacion_mes")
+
+# 📌 Función para generar tablas de frecuencia cruzada
+generar_tabla_frecuencia <- function(var) {
+  tabla <- datos %>%
+    group_by(cluster, .data[[var]]) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    mutate(percent = round(count / sum(count) * 100, 2))
+  
+  print(tabla)  # Mostrar la tabla en consola
+  
+  return(tabla)
+}
+
+# 📌 Generar tablas de frecuencia para cada variable categórica
+tablas_frecuencia <- lapply(categorical_vars, generar_tabla_frecuencia)
+
+# 📌 Función para generar gráficos de barras apiladas por cluster (uno por uno)
+# 📌 Función para generar gráficos de barras apiladas por cluster
+graficar_categoricas <- function(var) {
+  ggplot(datos, aes(x = cluster, fill = as.factor(.data[[var]]))) +
+    geom_bar(position = "fill") +  # Barras apiladas en proporciones
+    labs(title = paste( var),
+         x = "Cluster", y = "Proporción",
+         fill = var) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    theme_minimal()
+}
+
+
+```
+
+*Figura 21. Distribución de variables categóricas  por cluster*
+```{r}
+
+library(gridExtra)  # Para organizar los gráficos en una grilla
+
+# 📌 Generar todos los gráficos y almacenarlos en una lista
+graficos <- lapply(categorical_vars, graficar_categoricas)
+
+# 📌 Mostrar los gráficos en una grilla de 2 columnas y 3 filas
+do.call(grid.arrange, c(graficos, ncol = 2))
+
+```
+
+- La distribución por **tipo de persona** muestra en términos generales parecería ser similar a través de los 6 *clusters*. Sólo en el *cluster 4* se evidencia una mayor proporción de hombres.
+
+- En cuanto a la variable **situación_mes_actual**, la mayoría de los individuos en todos los *clusters* se encuentran en situación 1. El *cluster 5* es el que presenta la mayor proporción de individuos en situación 2.
+
+- La distribución de la variable indicadora **tiene_garantía** muestra que el *cluster 4* es el único grupo con mayor proporción de individuos con deuda garantizada.
+
+- El *cluster 5* es el grupo con mayor proporción de individuos en **mora de más de 30 días**, lo que sugiere un mayor nivel de riesgo crediticio dentro de este segmento. Este patrón coincide con el análisis previo de CP2, donde el *cluster 5* mostraba los valores más altos, lo que refuerza la idea de que este grupo concentra a los individuos con mayor riesgo financiero.
+
+- Se observa que el *cluster 5* es el único grupo con varias **situaciones crediticias máximas**, en especial las más graves, confirmando que este *cluster* concentra el mayor riesgo financiero. Los *clusters 1,3 y 6* están casi completamente compuestos por individuos en situación 1, lo que sugiere perfiles de menor riesgo. Estos resultados refuerzan la segmentación observada previamente en CP2 y mora de 30 días, donde el *cluster 5* se destacaba como el de mayor exposición a incumplimientos.
+
+
+## Conclusiones sobre los clusters
+
+En términos generales, según lo observado podría pensarse en cada *cluster* como:
+
+- **Cluster 1**: Perfil financiero estable, sin mora significativa ni deudas garantizadas. Principalmente en situación 1.
+
+- **Cluster 2**: Similar a *Cluster 1*, pero con una ligera presencia de mora y mayor número de deudas en distintas entidades.
+
+- **Cluster 3**: Composición equilibrada, con algunos individuos de menor edad y una baja presencia de mora o riesgo crediticio.
+
+- **Cluster 4**: Se diferencia por una alta proporción de deuda garantizada y menor riesgo crediticio. 
+
+- **Cluster 5**: Mayor riesgo financiero. Alta presencia de mora, *default* y múltiples deudas. Se concentra el mayor porcentaje de individuos en situaciones críticas.
+
+- **Cluster 6**: Similar a *clusters 1 y 3*, con perfiles de mayor edad y sin grandes niveles de mora o riesgo financiero.
+
+# Modelo predictivo para la variable default
+
+El objetivo de esta sección es construir modelos predictivos que estimen la probabilidad de *default* (`default`=1), utilizando únicamente las variables disponibles a junio de 2019.
+
+Para garantizar una comparación justa, se usará la misma partición de datos en los tres modelos. Además, se evaluará la capacidad predictiva con métricas de clasificación y curvas ROC.
+
+## Preparación de datos y particionamiento
+
+Antes de entrenar los modelos, es importante preparar los datos. Este proceso incluye la selección de variables predictoras, el manejo de valores faltantes y la división en conjuntos de entrenamiento y prueba.
+
+La base de datos se particiona en 80% para entrenamiento y 20% para prueba. Esta división permite que los modelos aprendan a partir de una porción de los datos y luego sean evaluados en un conjunto independiente, lo que ayuda a medir su capacidad de generalización a nuevos casos.
+
+```{r}
+#| message: false
+#| warning: false
+# 📌 Cargar librerías necesarias
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+
+# 📌 Definir las variables predictoras excluyendo la variable objetivo "default"
+variables_pred <- c("tipo_persona", "n_deudas_actual", "proxy_edad_actual", "deuda_total_actual", 
+                    "deuda_con_garantia_actual", "situacion_mes_actual", "prop_con_garantia_actual", 
+                    "tiene_garantia_actual", "mora_30_dias_mes_actual", "n_meses_seg_bcra",
+                    "media_deuda_total", "media_deuda_situacion_1", "media_deuda_situacion_2",
+                    "media_deuda_con_garantia", "media_deuda_sin_garantia", "media_deuda_en_default",
+                    "max_situacion_mes", "max_sit_mes_con_garantia", "max_sit_mes_sin_garantia",
+                    "media_prop_situacion_1", "media_prop_situacion_2", "media_prop_default",
+                    "media_prop_con_garantia", "prop_tuvo_garantia", "prop_mora_30_dias_seg",
+                    "prop_default_seg")
+
+# 📌 Crear dataset con variables seleccionadas
+datos_modelo <- datos %>% select(all_of(variables_pred), default)
+
+# 📌 Convertir variable objetivo a factor para clasificación
+datos_modelo$default <- as.factor(datos_modelo$default)
+
+# 📌 Manejar valores faltantes (reemplazar NA en variables específicas)
+datos_modelo <- datos_modelo %>%
+  mutate(
+    max_sit_mes_con_garantia = ifelse(is.na(max_sit_mes_con_garantia), 0, max_sit_mes_con_garantia),
+    max_sit_mes_sin_garantia = ifelse(is.na(max_sit_mes_sin_garantia), 0, max_sit_mes_sin_garantia)
+  )
+
+# 📌 Partición en entrenamiento (80%) y prueba (20%)
+set.seed(123)
+trainIndex <- createDataPartition(datos_modelo$default, p = 0.8, list = FALSE)
+trainData <- datos_modelo[trainIndex, ]
+testData  <- datos_modelo[-trainIndex, ]
+
+
+```
+
+## Entrenamiento de modelos
+
+En esta sección se entrenan múltiples modelos de clasificación para predecir el *default*. Se consideran los siguienes modelos:
+
+-   **Modelo 1 - Random Forest con variables originales**: un ensamble de árboles de decisión que mejora la generalización a reducir la variancia del modelo.
+
+-   **Modelo 2 - Random Forest optimizado**: se ajusta `mtry`mediante validación cruzada y se seleccinan las variables más importantes observadas en el Modelo 1.
+
+-   **Modelo 3 - Árbol de decisión CART**: un modelo interpretable que permite visualizar reglas de decisión simples. Se establece un criterio de poca y profundidad máxima para evitar sobreajuste.
+
+-   **Modelo 4 - Random Forest con CP y variables no resumidas en la técnica**: se entrena al modelo con las dos primeras componentes principales extraídas en el ACP, además de variables categóricas y discretas no incluidas en dicho análisis.
+
+Cada modelo se entrenará sobre el mismo conjunto de entrenamiento para asegurar una comparación justa y evitar sesgos en la evaluación.
+
+### Modelo 1: Random Forest con variables originales
+
+El primer modelo implementado es un *Random Forest* sin optimización, utilizando todas las variables disponibles hasta junio de 2019. Este enfoque permite evaluar un punto de referencia sobre la capacidad predictiva del modelo antes de aplicar estrategias de optimización.
+
+Se construye con 500 árboles (`ntree=500`) permitiendo una mejor estimación de la importancia de las variables. No se ajuste el hiperparámetro `mtry` (cantidad de variables evaluadas en cada división), utilizando en su lugar un valor predeterminado.
+
+Dado que la variable objetivo `default` está altamente desbalanceada, se espera que el modelo tenga un alto desempeño en la clase mayoritaria (sin *default*), pero un bajo desempeño en la detección de casos con *default*.
+
+```{r}
+# 📌 Entrenar modelo Random Forest
+set.seed(123)
+modelo_rf <- randomForest(default ~ ., data = trainData, 
+                          ntree = 500, 
+                          mtry = sqrt(ncol(trainData) - 1),  # Número de predictores en cada split
+                          importance = TRUE)
+
+# 📌 Evaluar importancia de variables
+varImpPlot(modelo_rf, main = "Figura 22. Importancia de Variables - Random Forest")
+
+```
+
+El gráfico de importancia de variables de la *Figura 22* generado a partir del modelo permite identificar qué variables tienen mayor influencia en la predicción del *default*.
+
+La métrica *Mean Decrease Accuracy* evalúa cuánto disminuye la precisión del modelo si se excluye una variable del modelo. En este caso las variables con mayor impacto son `media_deuda_situacion_1`,`media_deuda_total`,`media_deuda_sin_garantia`,`n_deudas_actual`,`deuda_total_actual` y `n_meses_seg_bcra`.
+
+Por otra parte, la métrica *Mean Decrease Gini*, mide la capacidad de una variable de dividir correctamente las clases en cada nodo del árbol.Valores más altos indican mayor capacidad discriminatoria. Las variables con mayor contribución resultaron: `proxy_edad_actual`, `media_prop_situacion_1`, `media_deuda_situacion_1`, `media_deuda_total`, `media_deuda_sin_garantia`,`deuda_total_actual` y`prop_mora_30_dias_seg`.
+
+Algunas variables que tienen baja importancia en ambas métricas como `tiene_garantia_actual`,`max_sit_mes_con_garantia` y `prop_con_garantia_actual` podrían ser eliminadas para reducir la complejidad del modelo.
+
+### Modelo 2: Random Forest optimizado
+
+Se optimiza el modelo probando diferentes valores de `mtry`, se excluyen variables poco relevantes según la importancia en el Random Forest base y se reemplaza `proxy_edad_actual` por `grupo_edad`.
+
+```{r}
+#| message: false
+#| warning: false
+# 📌 Definir variables optimizadas
+variables_opt <- c("tipo_persona", "n_deudas_actual", "proxy_edad_actual", "deuda_total_actual", 
+                   "deuda_con_garantia_actual", "situacion_mes_actual", "n_meses_seg_bcra",
+                   "media_deuda_total", "media_deuda_situacion_1", "media_deuda_situacion_2",
+                   "media_deuda_con_garantia", "media_deuda_sin_garantia", "media_deuda_en_default",
+                   "max_situacion_mes", "media_prop_situacion_1", "media_prop_situacion_2",
+                   "media_prop_default", "media_prop_con_garantia", "prop_tuvo_garantia",
+                   "prop_mora_30_dias_seg")
+
+# 📌 Crear dataset optimizado
+trainData_opt <- trainData %>% select(all_of(variables_opt), default)
+testData_opt  <- testData %>% select(all_of(variables_opt), default)
+
+# 📌 Convertir variable objetivo a factor
+trainData_opt$default <- as.factor(trainData_opt$default)
+testData_opt$default  <- as.factor(testData_opt$default)
+
+
+```
+
+
+*Figura 23: Valor de mtry óptimo*
+```{r}
+# 📌 Optimización de `mtry`
+set.seed(123)
+best_mtry <- tuneRF(
+  x = trainData_opt[,-which(names(trainData_opt) == "default")], 
+  y = trainData_opt$default, 
+  stepFactor = 1.5, improve = 0.01, ntreeTry = 500, trace = FALSE
+)
+
+# 📌 Extraer mejor valor de `mtry`
+best_mtry_value <- best_mtry[which.min(best_mtry[,2]), 1]
+
+
+```
+
+Según la *Figura 23* el mejor valor para `mtry` resulta ser 4.
+
+```{r}
+# 📌 Entrenar Random Forest optimizado
+set.seed(123)
+modelo_rf_opt <- randomForest(
+  default ~ ., data = trainData_opt, 
+  ntree = 1000,  
+  mtry = best_mtry_value,  
+  importance = TRUE
+)
+
+# 📌 Visualizar la importancia de las variables
+varImpPlot(modelo_rf_opt, main = "Figura 24. Importancia de Variables - RF Optimizado")
+
+```
+
+El análisis de importancia de variables (*Figura 24*) confirma la relevancia del historial de endeudamiento y la evolución de la situación crediticia como los principales factores predictivos del default. Variables como la cantidad de deudas, la proporción de deuda en distintas situaciones y los montos históricos son clave para la predicción.
+
+### Modelo 3: CART
+
+El modelo CART, a diferencia de los modelos basados en conjuntos como *Random Forest*, permiten generar reglas de clasificación simples y fácilmente interpretables. En este caso, se entrena un modelo CART con una profundidad máxima de 4, (`maxdepth=4`) para mantener un balance entre interpretabilidad y desempeño predictivo. Esta restricción evita el riesgo de sobreajuste.
+
+
+*Figura 25. Árbol de decisión CART*
+```{r}
+# 📌 Entrenar modelo CART
+set.seed(123)
+modelo_cart <- rpart(default ~ ., data = trainData, method = "class",
+                     control = rpart.control(cp = 0.01, minsplit = 20, maxdepth = 4))
+
+# 📌 Visualizar el árbol de decisión
+rpart.plot(modelo_cart, type = 4, extra = 104, tweak = 1.2, main = "Árbol de Decisión CART")
+
+```
+
+El árbol CART se basa en reglas secuenciales, evaluando variables en distintos niveles (*Figura 25*):
+
+-   **Primer nivel**: variable `media_prop_situacion_1` (proporción de deuda en situación 1). Si la proporción de deuda en situación 1 es mayor o igual a 0.97, el individuo tiene muy baja probabilidad de estar en *default* (5%). Si la proporción de deuda en situación 1 es menor a 0.97, se analiza la situación crediticia en el mes actual.
+
+-   **Segundo nivel**: variable `situacion_mes_actual` (situación crediticia más grave en junio de 2019). Si la situación registrada más grave es 1 (situación normal), el individuo sigue teniendo bajo riesgo de *default* (29%).
+
+-   **Tercer nivel**: variable `media_deuda_situacion_2` (Proporción de deuda en situación 2): si la proporción de deuda en situación 2 es menos a 0.73, la probabilidad de *default* es 34%, mientras que si es mayor o igual, la probabilidad de estar en *default* aumenta al 66%.
+
+### Modelo 4: Random Forest con CP
+
+En este modelo, se busca meorar la capacidad predictiva del *Random Forest* incorporando transformaciones de variables y reducción de dimensionalidad mediante el ACP realizado previamente. Para ello, se incluye:
+
+-   Las dos primeras CP obtenidas en el ACP realizado previamente. Las primeras dos dimensiones del ACP resumen la información contenida en múltiples variables numéricas altamente correlacionadas, reduciendo la dimensionalidad del problema y ayudando a evitar redundancia en los predictores.
+
+-   Variables no incluidas en el ACP como `tipo_persona_cat`, `n_deudas_actual` y `situacion_mes_actual`, `proxy_edad_actual`, que pueden aportar información relevante sobre el riesgo de *default*.
+
+```{r}
+
+variables_pred_4 <- c("tipo_persona_cat", "n_deudas_actual", "proxy_edad_actual",
+                       "situacion_mes_actual",
+                      "tiene_garantia_actual","mora_30_dias_mes_actual", "max_situacion_mes", "max_sit_mes_con_garantia", "max_sit_mes_sin_garantia", 
+                      "deuda_total_actual", "situacion_mes_actual", "n_meses_seg_bcra")
+
+
+variables_opt <- c("tipo_persona", "n_deudas_actual", "proxy_edad_actual", 
+                    "n_meses_seg_bcra", "max_situacion_mes")
+datos_pca <- as.data.frame(acp_resultado$ind$coord[, 1:2])  # Solo tomamos las dos primeras CPs
+colnames(datos_pca) <- c("Dim.1", "Dim.2")  # Renombramos para mayor claridad
+
+# 📌 Agregar estas dimensiones a la base de datos original
+datos <- cbind(datos, datos_pca)  # Añadir Dim.1 y Dim.2 a 'datos'
+
+variables_pred_4 <- c(variables_pred_4, "Dim.1", "Dim.2")  # Se agregan las CPs
+datos_modelo_4 <- datos %>% select(all_of(variables_pred_4), default)
+
+
+datos_modelo_4 <- datos_modelo_4 %>%
+  mutate(
+    max_sit_mes_con_garantia = ifelse(is.na(max_sit_mes_con_garantia), 0, max_sit_mes_con_garantia),
+    max_sit_mes_sin_garantia = ifelse(is.na(max_sit_mes_sin_garantia), 0, max_sit_mes_sin_garantia)
+  )
+datos_modelo_4$default <- as.factor(datos_modelo_4$default)
+set.seed(123)
+trainData_4 <- datos_modelo_4[trainIndex, ]
+testData_4  <- datos_modelo_4[-trainIndex, ]
+
+```
+
+Se entrena el *Random Forest* con 500 árboles y un subconjunto de predictores igual a 4 (`mtry=4`).
+
+```{r}
+# 📌 Entrenar Modelo Random Forest con Variables Transformadas + ACP
+set.seed(123)
+modelo_rf_4 <- randomForest(default ~ ., data = trainData_4, ntree = 500, 
+                            mtry = 4, importance = TRUE)
+
+# 📌 Evaluación del modelo en conjunto de prueba
+predicciones_rf_4 <- predict(modelo_rf_4, newdata = testData_4, type = "class")
+
+# 📌 Matriz de confusión
+conf_matrix_rf_4 <- confusionMatrix(predicciones_rf_4, testData_4$default)
+
+# 📌 Importancia de variables
+varImpPlot(modelo_rf_4, main = "Figura 26. Importancia de Variables - Random Forest")
+
+```
+
+Se observa en la *Figura 26* que las CP incluidas han absorbido gran parte de la información de las variables originales, reduciendo la dimensionalidad sin perder el poder predictivo. De todas maneras, el modelo sigue considerando factores claves como la cantidad de deudas, el historial de mora y la situación crediticia.
+
+## Evaluación de modelos
+
+Una vez entrenados los modelos, es importante evaluar su capacidad predictiva para determinar cuál de ellos ofrece el mejor desempeño en la predicción del `default`. Para ello se utilizarán distintas métricas de clasificación, incluyendo:
+
+-   **Accuracy**: Proporción de predicciones correctas sobre el total de observaciones.
+
+-   **Sensitivity**: Capacidad del modelo para identificar correctamente los casos de *default* (clase positiva).
+
+-   **Specificity**: Capacidad del modelo para identificar correctamente los casos de no `default` (clase negativa).
+
+-   **Precision** (Pos Pred Value - PPV): Proporción de predicciones positivas que realmente corresponden a un *default*.
+
+-   **Negative Predictive Value** (NPV): Proporción de predicciones negativas que realmente corresponden a no *default*.
+
+Dado que el objetivo es detectar correctamente los casos de `default = 1`, debemos asegurarnos de que la clase positiva en confusionMatrix() sea 1, ya que por defecto se toma 0.
+
+La *Tabla Y* presenta una evaluación comparativa de los cuatro modelos predictivos en términos de diferentes métricas de clasificación.
+
+```{r}
+# 📌 Función para evaluar modelos con clase positiva = 1
+evaluar_modelo <- function(modelo, testData) {
+  pred <- predict(modelo, testData, type = "class")  # Predicciones
+  cm <- confusionMatrix(pred, testData$default, positive = "1")  # Definir clase positiva como 1
+  return(cm)
+}
+# 📌 Evaluar cada modelo en el conjunto de prueba
+cm_rf     <- evaluar_modelo(modelo_rf, testData)
+cm_rf_opt <- evaluar_modelo(modelo_rf_opt, testData)
+cm_cart   <- evaluar_modelo(modelo_cart, testData)
+cm_rf_4   <- evaluar_modelo(modelo_rf_4, testData_4)  # Si usa otra partición, ajusta testData_4
+# 📌 Crear tabla con métricas clave y redondear a 3 decimales
+metricas_comparacion <- data.frame(
+  Modelo = c("Random Forest", "Random Forest Optimizado", "CART", "Random Forest (CPs + Variables Transformadas)"),
+  Accuracy = round(c(cm_rf$overall["Accuracy"], cm_rf_opt$overall["Accuracy"], cm_cart$overall["Accuracy"], cm_rf_4$overall["Accuracy"]), 3),
+  Sensitivity = round(c(cm_rf$byClass["Sensitivity"], cm_rf_opt$byClass["Sensitivity"], cm_cart$byClass["Sensitivity"], cm_rf_4$byClass["Sensitivity"]), 3),
+  Specificity = round(c(cm_rf$byClass["Specificity"], cm_rf_opt$byClass["Specificity"], cm_cart$byClass["Specificity"], cm_rf_4$byClass["Specificity"]), 3),
+  Precision = round(c(cm_rf$byClass["Pos Pred Value"], cm_rf_opt$byClass["Pos Pred Value"], cm_cart$byClass["Pos Pred Value"], cm_rf_4$byClass["Pos Pred Value"]), 3),
+  Neg_Predictive_Value = round(c(cm_rf$byClass["Neg Pred Value"], cm_rf_opt$byClass["Neg Pred Value"], cm_cart$byClass["Neg Pred Value"], cm_rf_4$byClass["Neg Pred Value"]), 3)
+)
+
+# 📌 Mostrar tabla con knitr::kable()
+kable(metricas_comparacion, caption = "Tabla 14. Comparación de Modelos con Clase Positiva = Default (1)")
+
+
+```
+
+La tabla de métricas de los modelos evaluados (*Tabla 14*) muestra que todos los modelos tienen una alta precisión general (*accuracy* aproximado de 91.8%), lo que indica que en términos generales clasifican correctamente la mayoría de las observaciones. Sin embargo, al analizar métricas más específicas, se observa un problema clave: la sensibilidad (*recall*) es baja en todos los modelos, situándose entre 22.9% y 26.4%. Esto significa que los modelos no detectan bien los casos de *default* (`default = 1`), clasificando erróneamente a muchos individuos en riesgo como no morosos.
+
+Por otro lado, la especificidad es extremadamente alta (\> 97%), lo que indica que los modelos son muy efectivos en clasificar correctamente a los individuos que no están en *default* (`default = 0`). Es decir, los modelos están sesgados hacia la clase mayoritaria, lo que genera una alta cantidad de falsos negativos (personas que realmente están en *default* pero fueron clasificadas como no morosas).
+
+El valor predictivo positivo (precisión) es alto, lo que significa que cuando un modelo predice *default*, en la mayoría de los casos acierta. Sin embargo, dado que la sensibilidad es baja, muchos individuos en riesgo real de *default* están siendo ignorados, lo que en un contexto financiero puede representar un alto riesgo.
+
+El *Negative Predictive Value* (NPV), que mide qué tan confiables son las predicciones de no *default* (`default = 0`), es relativamente bajo (entre 0.93 y 0.94), lo que refuerza la idea de que los modelos están dejando escapar muchos casos de *default*.
+
+Comparar los modelos en términos del Área Bajo la Curva (AUC - ROC), que mide la capacidad del modelo para discriminar entre los casos de *default* (`default= 1`) y no *default* (`default= 0`).
+
+En la *Figura 27* se muestran las curvas ROC de los cuatro modelos analizados. Estas curvas reflejan la relación entre la tasa de verdaderos positivos y la tasa de falsos negativos, proporcionando una imagen visual del desempeño de cada modelo.
+
+```{r}
+# 📌 Cargar librerías necesarias
+library(pROC)
+library(ggplot2)
+
+# 📌 Obtener probabilidades en lugar de clases para cada modelo
+prob_rf <- predict(modelo_rf, testData, type = "prob")[,2]
+prob_rf_opt <- predict(modelo_rf_opt, testData, type = "prob")[,2]
+prob_cart <- predict(modelo_cart, testData, type = "prob")[,2]
+prob_rf_4 <- predict(modelo_rf_4, testData_4, type = "prob")[,2]  # testData_4 si el set es distinto
+
+# 📌 Calcular curvas ROC y AUC individualmente
+roc_rf <- roc(testData$default, prob_rf)
+roc_rf_opt <- roc(testData$default, prob_rf_opt)
+roc_cart <- roc(testData$default, prob_cart)
+roc_rf_4 <- roc(testData_4$default, prob_rf_4)  # testData_4 si es diferente
+
+# 📌 Crear el gráfico ROC con múltiples líneas
+ggplot() +
+  geom_line(aes(x = 1 - roc_rf$specificities, y = roc_rf$sensitivities, color = "Random Forest"), size = 1) +
+  geom_line(aes(x = 1 - roc_rf_opt$specificities, y = roc_rf_opt$sensitivities, color = "Random Forest Optimizado"), size = 1) +
+  geom_line(aes(x = 1 - roc_cart$specificities, y = roc_cart$sensitivities, color = "CART"), size = 1) +
+  geom_line(aes(x = 1 - roc_rf_4$specificities, y = roc_rf_4$sensitivities, color = "Random Forest (CPs + Variables Transformadas)"), size = 1) +
+  geom_abline(linetype = "dashed") +
+  labs(title = "Figura 27. Curvas ROC Comparativas",
+       x = "Tasa de Falsos Positivos (1 - Especificidad)",
+       y = "Tasa de Verdaderos Positivos (Sensibilidad)") +
+  theme_minimal() +
+  theme(legend.title = element_blank(), legend.position = "bottom")
+
+# 📌 Mostrar AUC de cada modelo
+auc_rf <- auc(roc_rf)
+auc_rf_opt <- auc(roc_rf_opt)
+auc_cart <- auc(roc_cart)
+auc_rf_4 <- auc(roc_rf_4)
+
+auc_values <- data.frame(
+  Modelo = c("Random Forest", "Random Forest Optimizado", "CART", "Random Forest (CPs + Variables Transformadas)"),
+  AUC = round(c(auc_rf, auc_rf_opt, auc_cart, auc_rf_4), 3)
+)
+
+
+
+```
+
+```{r}
+# 📌 Mostrar tabla con AUC en formato knitr
+library(knitr)
+kable(auc_values, caption = "Tabla 15. Área Bajo la Curva (AUC) para cada Modelo")
+
+
+```
+
+El modelo *RF Optimizado* es el más robusto, aunque la mejora respecto al RF Base es mínima (de 0.799 a 0.800). El *modelo CART* es el menos efectivo, con un AUC inferior a 0.75, lo que implica que su capacidad predictiva es menor. La inclusión de las CP en lugar de las variables cuantitativas no generó una mejora significativa, por lo que los modelos con las variables originales son suficientes para capturar la variabilidad en la predicción del *default*.
+
+## Conclusiones sobre los modelos propuestos
+
+***¿Utilizaría el modelo construido para evaluar futuros solicitantes de un crédito?***
+
+A partir de la evaluación de los modelos construidos, se observa que, si bien presentan una alta precisión general, muestran una baja especificidad, lo que significa que tienen dificultades para detectar correctamente a los individuos que efectivamente caerán en *default*. Este es un problema crítico, ya que el principal objetivo del modelo es identificar con precisión a los solicitantes con mayor riesgo de incumplimiento.
+
+El modelo *Random Forest optimizado* mostró un desempeño ligeramente superior en términos de AUC, lo que indica una mejor capacidad discriminatoria. Sin embargo, la baja sensibilidad en la detección de casos *default* implica que el modelo sigue clasificando erróneamente como solventes a individuos que en realidad podrían no pagar sus deudas.
+
+Las soluciones que se proponen son las siguientes:
+
+-   **Ajustar el umbral de clasificación**: Reducir el umbral de decisión (por ejemplo, de 0.5 a 0.3) puede ayudar a mejorar la sensibilidad, permitiendo capturar más casos de default, aunque a costa de un mayor número de falsos positivos.
+
+-   **Obtener más información**: Si se cuenta con datos adicionales sobre historial crediticio, ingresos u otras variables relacionadas con el comportamiento financiero, esto podría mejorar la capacidad predictiva del modelo.
+
+-   **Manejo del desbalance de clases**: Implementar técnicas de reescalado de pesos en el modelo, sobremuestreo de la clase minoritaria o submuestreo de la clase mayoritaria podría ayudar a mejorar la detección de los casos de default.
+
+-   **Explorar otros modelos**: Modelos como Gradient Boosting (XGBoost o LightGBM) o regresión logística podrían ser más efectivos para capturar patrones más complejos en los datos y mejorar la clasificación de los casos de default.
+
+Si bien el modelo actual ofrece una buena precisión general, no es completamente confiable para la evaluación de futuros solicitantes de crédito debido a su baja sensibilidad en la detección de aquellos en riesgo de default. Antes de implementarlo en un entorno real, se recomienda mejorar la estrategia de modelado mediante ajustes en el umbral de clasificación, manejo del desbalance y exploración de modelos más avanzados.
+
+
+
+# Conclusiones finales
+
+El análisis realizado permitió comprender la dinámica crediticia de los individuos y segmentarlos en grupos con características diferenciadas. A través del análisis exploratorio, se identificó que la mayoría de los individuos mantuvo una situación crediticia estable, aunque un subconjunto experimentó un deterioro financiero, alcanzando niveles de mora o *default*. Las correlaciones observadas indicaron estabilidad en el comportamiento crediticio a lo largo del tiempo, pero también reflejaron redundancia en algunas variables.
+
+La aplicación del Análisis de Componentes Principales permitió reducir la dimensionalidad de los datos. La primera dimensión reflejó el acceso a crédito garantizado, mientras que la segunda representó el nivel de riesgo financiero, diferenciando a los individuos en función de su estabilidad crediticia. A partir de estas dimensiones, se logró una segmentación efectiva mediante *K-means*, identificando seis *clusters* con perfiles distintos en términos de deuda, mora y garantías.
+
+Si bien los modelos de predicción presentaron una alta precisión general, mostraron dificultades para identificar correctamente a los individuos en *default*, lo que resalta la necesidad de ajustar la estrategia de clasificación. El uso de técnicas como la modificación del umbral de decisión, el manejo del desbalance de clases y la exploración de modelos alternativos podría mejorar la capacidad del sistema para predecir el riesgo de incumplimiento de manera más efectiva.
+
+El estudio evidencia la importancia del uso de técnicas de análisis multivariado y de aprendizaje automático para la segmentación y evaluación del riesgo financiero. No obstante, las limitaciones en la sensibilidad del modelo destacan la necesidad de seguir optimizando las estrategias de clasificación para mejorar su aplicación en contextos reales.
